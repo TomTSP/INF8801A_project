@@ -1,22 +1,20 @@
-import math
-from typing import NewType
 import numpy as np
 import cv2
-import scipy, scipy.ndimage as ndimage
+import scipy.ndimage as ndimage
 from image_morpher import ImageMorpher
+import matplotlib.pyplot as plt
 
-def style_transfer(style_file, style_mask_file, style_lm_file, ex_file, ex_mask_file, ex_lm_file):
+def style_transfer(style_file, ex_file):
     # On utilise la même valeur de n (nombre d'image dans la pile) que dans le papier.
-    n=7
+    n=6
     
     # On récupère les images et les masques associés.
-    style = read_file(style_file)
-    ex = read_file(ex_file)
+    style = read_file('input/'+style_file+'.jpg')
+    ex = read_file('input/'+ex_file+'.png')
+    style_mask = read_file('input/'+style_file+'_mask.png', True)
+    ex_mask = read_file('input/'+ex_file+'_mask.png', True)
 
-    style_mask = read_file(style_mask_file, True)
-    ex_mask = read_file(ex_mask_file, True)
-
-    h, w, c = style.shape
+    _, _, c = style.shape
 
     # On va ne travailler que sur les visages et on supprime donc l'arrière plan pour les deux images.
     for channel in range(c):
@@ -33,7 +31,7 @@ def style_transfer(style_file, style_mask_file, style_lm_file, ex_file, ex_mask_
 
     # On suit le papier et l'on récupère les valeurs de l'opérateur W(.) à partir des images et de leurs landmarks : Beier and Neely 1992.
     im = ImageMorpher()
-    _, vx, vy = im.run(style, ex, read_lm(style_lm_file), read_lm(ex_lm_file))
+    _, vx, vy = im.run(style, ex, read_lm('input/'+style_file+'.lm'), read_lm('input/'+ex_file+'.lm'))
 
     # Afin d'appliquer W(.) aux énergies pour l'image stylisée
     for i in range(len(style_energies)):
@@ -41,43 +39,47 @@ def style_transfer(style_file, style_mask_file, style_lm_file, ex_file, ex_mask_
 
     # On passe au calcul des cartes de gain
     # On reprend les mêmes valeurs d'epsilon et de gain max et min que celle proposées dans l'article
-    eps = 0.01 ** 2
+    epsilon = 0.01**2
     gain_max = 2.8
     gain_min = 0.9
+    beta = 3
     matched = np.zeros(ex.shape)
-    for i in range(n):
+    for l in range(n):
         # On calcule le gain pour chaque couche suivant la formule définie dans l'article
-        gain = (style_energies[i] / (ex_energies[i] + eps))**0.5
+        gain = (style_energies[i] / (ex_energies[i] + epsilon))**0.5
         gain[gain < gain_min] = gain_min
         gain[gain > gain_max] = gain_max
+        gain = ndimage.filters.gaussian_filter(gain, beta * 2**l)
+        plt.imshow(gain)
+        plt.show()
+
         # On construit notre image finale à partir des produits entre les différences de gaussiennes et les gains
         matched += ex_dogs[i] * gain
     # On oublie pas d'ajouter les résidus à notre image
     matched += style_residuals[vy, vx]
     
     
-    cv2.imwrite('output/no_bg.jpg', matched*255)
+    cv2.imwrite('output/no_bg.jpg', matched)
     # On cherche désormais à récupérer l'arrière plan de l'image stylisée de on l'étend par inpainting avant de l'appliquer à notre exemplaire
     bg = bg_inpainting(style, style_mask)
-    thres = 20/255
+    cv2.imwrite('output/bg.jpg', bg)
+    thres = 20
     matched[ex_mask < thres] = bg[ex_mask < thres]
-    cv2.imwrite('output/good_bg.jpg', matched*255)
+    cv2.imwrite('output/good_bg.jpg', matched)
   
     return matched
 
-def read_file(file, grey = False):
+def read_file(file, grey = False, normalize = False):
     # Nous nous sommes fortement inspirée d'une fonctions déjà existantes dans l'un des TPs
+    
     # Reading image
-    if isinstance(file, str):
-        img = cv2.cvtColor(cv2.imread(file), cv2.COLOR_BGR2RGB)
-    else:
-        img = file
-    # Converting the image to Grayscale
+    img = cv2.imread(file)
+    # Converting the image to Grayscale if asked
     if grey:
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     # Normalising values from [0,255] to [0,1]
-    if np.max(img) > 1:
+    if np.max(img) > 1 and normalize:
         img = img.astype(np.float64) / 255
 
     return img
@@ -94,7 +96,7 @@ def read_lm(lm_file):
     return lm
 
 # Cette fonction calcule des différences deux à deux des images floutées en suivant la méthode décrite dans l'article
-def compute_dog(img, n=7):
+def compute_dog(img, n):
     dogs = []
     for l in range(n):
         
@@ -124,13 +126,15 @@ def bg_inpainting(style, style_mask):
     _, _, c = style.shape
 
     bg = style.copy()
-    bg[style_mask > 20/255] = 0
+    bg[style_mask > 20] = 0
+
+    cv2.imwrite('output/bg_before.jpg', bg)
     
-    fixedAreas = style_mask < 20/255
+    fixedAreas = style_mask < 20
         
     for _ in range(1,100):
         for channel in range(c):
             # On fait la convolution de notre arrière plan par notre noyau avant de rétablir les valeurs des pixels fixe i.e. de l'arrière plan intial
-            bg[:,:,channel] = ndimage.correlate(bg[:,:,channel], kernel)/4
+            bg[:,:,channel] = ndimage.correlate(bg[:,:,channel], kernel)
             bg[:,:,channel][fixedAreas] = style[:,:,channel][fixedAreas]       
     return bg
