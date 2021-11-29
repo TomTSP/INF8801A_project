@@ -46,15 +46,13 @@ def style_transfer(style_file, ex_file):
     matched = np.zeros(ex.shape)
     for l in range(n):
         # On calcule le gain pour chaque couche suivant la formule définie dans l'article
-        gain = (style_energies[i] / (ex_energies[i] + epsilon))**0.5
+        gain = (style_energies[l] / (ex_energies[l] + epsilon))**0.5
         gain[gain < gain_min] = gain_min
         gain[gain > gain_max] = gain_max
         gain = ndimage.filters.gaussian_filter(gain, beta * 2**l)
-        plt.imshow(gain)
-        plt.show()
 
         # On construit notre image finale à partir des produits entre les différences de gaussiennes et les gains
-        matched += ex_dogs[i] * gain
+        matched += ex_dogs[l] * gain
     # On oublie pas d'ajouter les résidus à notre image
     matched += style_residuals[vy, vx]
     
